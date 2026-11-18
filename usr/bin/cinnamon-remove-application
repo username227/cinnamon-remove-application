@@ -17,7 +17,7 @@ sys.path.insert(0, "/usr/lib/cinnamon-remove-application")
 from operations import (RemovalError, validate_launcher, package_owner,
                         removal_plan, protected_in, removal_command,
                         flatpak_target, flatpak_removal_command,
-                        unowned_launcher_command)
+                        flatpak_unused_command, unowned_launcher_command)
 
 gettext.install("mint-common", "/usr/share/linuxmint/locale")
 
@@ -55,20 +55,25 @@ def message(text, kind=Gtk.MessageType.ERROR,
     return response
 
 
-def approve_packages(packages):
+def approve_packages(packages, cleanup_plan=None):
+    """Preview *exactly* the pacman packages the user will authorize.
+
+    Return that approved list or None. The unchecked default removes only
+    the selected application; checking the box refreshes the preview with
+    newly unnecessary dependencies before authorization.
+    """
     dlg = Gtk.MessageDialog(parent=None, flags=Gtk.DialogFlags.MODAL,
                             message_type=Gtk.MessageType.WARNING,
                             buttons=Gtk.ButtonsType.OK_CANCEL,
                             text=_("The following packages will be removed:"))
     dlg.set_keep_above(True)
-    # Cancel/Close is provided inside the dialog; hide the redundant titlebar X.
-    # Keep GTK decorations and ordinary painting (especially on Wayland).
     dlg.set_deletable(False)
     dlg.set_border_width(12)
     _style_dialog(dlg, Gtk.ResponseType.OK)
+
+    initial = list(packages)
+    chosen = list(initial)
     model = Gtk.ListStore(str)
-    for package in packages:
-        model.append([package])
     view = Gtk.TreeView(model=model)
     view.append_column(Gtk.TreeViewColumn(_("Packages to be removed"),
                                           Gtk.CellRendererText(), text=0))
@@ -76,15 +81,73 @@ def approve_packages(packages):
     scroll.set_size_request(340, 180)
     scroll.add(view)
     dlg.get_content_area().add(scroll)
+
+    def show_plan(plan):
+        model.clear()
+        for name in plan:
+            model.append([name])
+
+    show_plan(initial)
+    checkbox = Gtk.CheckButton(
+        label=_("Also remove dependencies no longer required"))
+    checkbox.set_active(False)
+
+    def on_cleanup_toggled(check):
+        nonlocal chosen
+        if not check.get_active():
+            chosen = list(initial)
+            show_plan(chosen)
+            return
+        try:
+            plan = list(cleanup_plan()) if cleanup_plan is not None else list(initial)
+            if not plan or not set(initial).issubset(plan):
+                raise RemovalError(_("Invalid dependency removal preview."))
+            blocked = protected_in(plan)
+            if blocked:
+                raise RemovalError(
+                    _("Removal would include protected packages: ") +
+                    ", ".join(blocked))
+            # removal_command verifies the names and protected set again.
+            removal_command(plan)
+        except (OSError, RemovalError) as exc:
+            check.set_active(False)
+            message(_("Cannot include unused dependencies."), detail=str(exc))
+            return
+        chosen = plan
+        show_plan(chosen)
+
+    checkbox.connect("toggled", on_cleanup_toggled)
+    dlg.get_content_area().pack_start(checkbox, False, False, 6)
     dlg.show_all()
     approved = dlg.run() == Gtk.ResponseType.OK
     dlg.destroy()
-    return approved
+    return list(chosen) if approved else None
 
 
-def perform(command):
+def approve_flatpak(name, scope):
+    """Confirm app removal and offer an independent, unchecked cleanup opt-in."""
+    dlg = Gtk.MessageDialog(parent=None, flags=Gtk.DialogFlags.MODAL,
+                            message_type=Gtk.MessageType.QUESTION,
+                            buttons=Gtk.ButtonsType.OK_CANCEL,
+                            text=_("Uninstall Flatpak application %s?") % name)
+    dlg.set_keep_above(True)
+    dlg.set_deletable(False)
+    dlg.set_border_width(12)
+    _style_dialog(dlg, Gtk.ResponseType.OK)
+    dlg.format_secondary_text(_("Installation: %s") % scope[2:])
+    checkbox = Gtk.CheckButton(
+        label=_("Also remove unused Flatpak runtimes and extensions"))
+    checkbox.set_active(False)
+    dlg.get_content_area().pack_start(checkbox, False, False, 6)
+    dlg.show_all()
+    approved = dlg.run() == Gtk.ResponseType.OK
+    cleanup = checkbox.get_active() if approved else False
+    dlg.destroy()
+    return approved, cleanup
+
+def perform(command, title=None, description=None, failure_title=None):
     """Leave GTK responsive while polkit and pacman run."""
-    dlg = Gtk.Dialog(title=_("Removing application"), parent=None,
+    dlg = Gtk.Dialog(title=title or _("Removing application"), parent=None,
                      flags=Gtk.DialogFlags.MODAL)
     dlg.set_keep_above(True)
     dlg.set_deletable(False)
@@ -94,7 +157,8 @@ def perform(command):
     spinner = Gtk.Spinner()
     spinner.start()
     row.pack_start(spinner, False, False, 0)
-    row.pack_start(Gtk.Label(label=_("Removing application…")), True, True, 0)
+    row.pack_start(Gtk.Label(label=description or _("Removing application…")),
+                   True, True, 0)
     dlg.get_content_area().add(row)
     result = {}
 
@@ -118,7 +182,7 @@ def perform(command):
     process = result.get("process")
     if process is None or process.returncode != 0:
         output = process.stdout if process else ""
-        message(_("Failed to remove application."),
+        message(failure_title or _("Failed to remove application."),
                 detail=(output or _("Authentication cancelled or removal failed."))[-5000:])
         return False
     return True
@@ -128,25 +192,47 @@ def main(path):
     path = validate_launcher(path)
     package = package_owner(path)
     if package:
-        packages = removal_plan(package)
+        packages = removal_plan(package, include_unused=False)
         blocked = protected_in(packages)
         if blocked:
             message(_("Cannot remove package %s as it is required by a system package.") % package,
                     detail=", ".join(blocked))
             return 1
-        if not approve_packages(packages):
+        chosen = approve_packages(
+            packages, cleanup_plan=lambda: removal_plan(package, include_unused=True))
+        if chosen is None:
             return 0
-        return 0 if perform(removal_command(packages)) else 1
+        return 0 if perform(removal_command(chosen)) else 1
 
     flatpak = flatpak_target(path)
     if flatpak:
         name, scope = flatpak
-        answer = message(_("Uninstall Flatpak application %s?") % name,
-                         Gtk.MessageType.QUESTION, Gtk.ButtonsType.OK_CANCEL,
-                         _("Installation: %s") % scope[2:])
-        if answer != Gtk.ResponseType.OK:
+        approved, cleanup = approve_flatpak(name, scope)
+        if not approved:
             return 0
-        return 0 if perform(flatpak_removal_command(name, scope)) else 1
+        if not perform(flatpak_removal_command(name, scope)):
+            return 1
+        if not cleanup:
+            return 0
+
+        # Flatpak uninstall has no supported dry-run option. Do not run
+        # installation-wide unused cleanup based on the first checkbox alone.
+        # Explain the wider scope and obtain an explicit second confirmation.
+        answer = message(
+            _("Remove unused Flatpak runtimes and extensions?"),
+            Gtk.MessageType.WARNING, Gtk.ButtonsType.YES_NO,
+            _("The application has been removed. Flatpak will determine which "
+              "runtimes and extensions are unused in the %s installation. "
+              "This can include components already unused before uninstall. "
+              "There is no exact removal preview. Continue?") % scope[2:])
+        if answer != Gtk.ResponseType.YES:
+            return 0
+        return 0 if perform(
+            flatpak_unused_command(scope),
+            title=_("Cleaning unused Flatpaks"),
+            description=_("Removing unused runtimes and extensions…"),
+            failure_title=_("Application removed, but unused Flatpak cleanup failed.")
+        ) else 1
 
     answer = message(
         _("This menu item is not associated to any package. "
