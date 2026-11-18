@@ -31,8 +31,14 @@ def capture_and_cancel(response=Gtk.ResponseType.CANCEL):
     def cancel():
         for window in Gtk.Window.list_toplevels():
             if isinstance(window, Gtk.Dialog) and window.get_visible():
+                assert not window.get_deletable(), "Redundant titlebar X still enabled"
                 style = window.get_style_context()
                 ok_button = window.get_widget_for_response(Gtk.ResponseType.OK)
+                for button in window.get_action_area().get_children():
+                    if isinstance(button, Gtk.Button) and style.has_class("cinnamon-remove-dialog"):
+                        assert button.get_style_context().has_class("cinnamon-remove-action"), (
+                            "Action button missing scoped styling class"
+                        )
                 seen.append({
                     "mapped": window.get_mapped(),
                     "styled": style.has_class("cinnamon-remove-dialog"),
