@@ -18,7 +18,5 @@ package() {
     "$pkgdir/usr/bin/cinnamon-remove-application"
   install -Dm644 "$srcdir/$pkgname/usr/lib/cinnamon-remove-application/operations.py" \
     "$pkgdir/usr/lib/cinnamon-remove-application/operations.py"
-  install -Dm644 "$srcdir/$pkgname/README.md" \
-    "$pkgdir/usr/share/doc/$pkgname/README.md"
 }
 
