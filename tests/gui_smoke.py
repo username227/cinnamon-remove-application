@@ -1,15 +1,15 @@
-"""Run only under Xvfb: smoke-test Cinnamon-like GTK dialogs without removing packages.
-
-Verifies the same style initializer used by all confirmation/error dialogs.
-"""
+"""Headless GTK 3 regression smoke test: never invoke package removal."""
 import importlib.util
 from importlib.machinery import SourceFileLoader
+import os
 from pathlib import Path
 import sys
+import tempfile
+from unittest import mock
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk
+from gi.repository import GLib, Gtk
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / "usr/lib/cinnamon-remove-application"))
@@ -19,33 +19,91 @@ spec = importlib.util.spec_from_loader("cinnamon_remove_application", loader)
 app = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(app)
 
+import appearance  # noqa: E402
+
 assert Gtk.init_check()[0], "GTK could not connect to a display"
-dlg = Gtk.MessageDialog(
-    parent=None, flags=Gtk.DialogFlags.MODAL,
-    message_type=Gtk.MessageType.WARNING,
-    buttons=Gtk.ButtonsType.OK_CANCEL, text="Preview — nothing will be removed",
-)
-# Exercise the *actual* confirmation function without authorizing removal.
-# The timeout sees the dialog after it maps and responds Cancel.
-seen = []
-def cancel_dialog():
-    for window in Gtk.Window.list_toplevels():
-        if isinstance(window, Gtk.Dialog) and window.get_visible():
-            seen.append(window.get_mapped())
-            window.response(Gtk.ResponseType.CANCEL)
-            return False
-    return True
 
-from gi.repository import GLib
-dlg.destroy()
-GLib.timeout_add(100, cancel_dialog)
-assert app.approve_packages(["test-package"]) is False
-assert seen == [True], "Package confirmation was not mapped"
 
-# The error-message path uses the same native GTK dialog machinery.
-seen.clear()
-GLib.timeout_add(100, cancel_dialog)
-app.message("Safe smoke test")
-assert seen == [True], "Error dialog was not mapped"
-print("GTK confirmation and error dialogs mapped successfully")
+def capture_and_cancel(response=Gtk.ResponseType.CANCEL):
+    """Capture the real displayed dialog and safely close it."""
+    seen = []
 
+    def cancel():
+        for window in Gtk.Window.list_toplevels():
+            if isinstance(window, Gtk.Dialog) and window.get_visible():
+                style = window.get_style_context()
+                ok_button = window.get_widget_for_response(Gtk.ResponseType.OK)
+                seen.append({
+                    "mapped": window.get_mapped(),
+                    "styled": style.has_class("cinnamon-remove-dialog"),
+                    "destructive": (
+                        ok_button is not None and ok_button.get_style_context()
+                        .has_class("cinnamon-remove-destructive")
+                    ),
+                })
+                window.response(response)
+                return False
+        return True
+
+    GLib.timeout_add(100, cancel)
+    return seen
+
+
+with tempfile.TemporaryDirectory() as config:
+    # No user's actual configuration is read by the CI smoke test.
+    os.environ["XDG_CONFIG_HOME"] = config
+
+    # First verify the exact unstyled appearance we know works in Cinnamon.
+    os.environ["CINNAMON_REMOVE_STYLE"] = "native"
+    seen = capture_and_cancel()
+    assert app.approve_packages(["test-package"]) is False
+    assert seen == [{"mapped": True, "styled": False, "destructive": False}], seen
+
+    # Exercise both palettes through the actual confirmation dialog.
+    os.environ["CINNAMON_REMOVE_STYLE"] = "cinnamon"
+    for scheme in ("light", "dark"):
+        os.environ["CINNAMON_REMOVE_COLOR_SCHEME"] = scheme
+        seen = capture_and_cancel()
+        assert app.approve_packages(["test-package"]) is False
+        assert seen == [{"mapped": True, "styled": True, "destructive": True}], seen
+        assert appearance._PROVIDER is not None
+        assert appearance._CACHED_SCHEME == scheme
+
+    # Color scheme can come from Cinnamon's GSettings, not just an override.
+    os.environ["CINNAMON_REMOVE_COLOR_SCHEME"] = "system"
+
+    class PortalSettings:
+        def __init__(self, value):
+            self.value = value
+
+        def get_enum(self, _key):
+            return self.value
+
+    with mock.patch.object(appearance, "_settings", return_value=PortalSettings(1)):
+        assert appearance._scheme() == "dark"
+    with mock.patch.object(appearance, "_settings", return_value=PortalSettings(2)):
+        assert appearance._scheme() == "light"
+
+    # The menu can use a persistent config file to opt out without a rebuild.
+    config_file = Path(config) / "cinnamon-remove-application" / "settings.ini"
+    config_file.parent.mkdir()
+    config_file.write_text("[appearance]\nstyle = native\n", encoding="utf-8")
+    os.environ.pop("CINNAMON_REMOVE_STYLE")
+    seen = capture_and_cancel()
+    assert app.approve_packages(["test-package"]) is False
+    assert seen == [{"mapped": True, "styled": False, "destructive": False}], seen
+
+    # A CSS/theme exception must not stop the confirmation dialog from mapping.
+    os.environ["CINNAMON_REMOVE_STYLE"] = "cinnamon"
+    with mock.patch.object(appearance, "style_dialog", side_effect=RuntimeError("test failure")):
+        seen = capture_and_cancel()
+        assert app.approve_packages(["test-package"]) is False
+        assert seen == [{"mapped": True, "styled": False, "destructive": False}], seen
+
+    # Even in an error path, the message dialog must remain visible.
+    os.environ["CINNAMON_REMOVE_COLOR_SCHEME"] = "dark"
+    seen = capture_and_cancel()
+    app.message("Safe smoke test")
+    assert seen[0]["mapped"] and seen[0]["styled"], seen
+
+print("GTK native/light/dark/fallback dialogs all mapped successfully")
