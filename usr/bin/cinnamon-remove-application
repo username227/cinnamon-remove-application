@@ -15,7 +15,7 @@ from gi.repository import GLib, Gtk
 
 sys.path.insert(0, "/usr/lib/cinnamon-remove-application")
 from operations import (RemovalError, validate_launcher, package_owner,
-                        removal_plan, protected_in, removal_command,
+                        removal_plan, required_by, protected_in, removal_command,
                         flatpak_target, flatpak_removal_command,
                         flatpak_unused_command, unowned_launcher_command)
 
@@ -188,11 +188,54 @@ def perform(command, title=None, description=None, failure_title=None):
     return True
 
 
+def explain_pacman_preview_failure(package, exc):
+    """Make a failed pacman dry-run useful without bypassing dependency safety."""
+    error = str(exc).strip()
+    if ("could not satisfy dependencies" in error.lower()
+            or "breaks dependency" in error.lower()):
+        try:
+            dependents = required_by(package)
+        except RemovalError:
+            dependents = []
+        if dependents:
+            display = dependents[:15]
+            names = "\\n".join(display)
+            remaining = len(dependents) - len(display)
+            if remaining:
+                names += "\\n" + _("...and %d more") % remaining
+            message(
+                _("Cannot uninstall %s: other packages require it.") % package,
+                Gtk.MessageType.WARNING,
+                detail=_("Installed packages listed as requiring %s:\\n\\n%s"
+                         "\\n\\nNothing was removed.") % (package, names))
+        else:
+            message(
+                _("Cannot uninstall %s without breaking dependencies.") % package,
+                Gtk.MessageType.WARNING,
+                detail=_("Pacman rejected the removal preview. Nothing was removed."
+                         "\\n\\n%s") % error)
+    else:
+        message(_("Cannot preview removal of %s.") % package,
+                detail=error or _("Pacman did not return a removal plan."))
+
+
 def main(path):
     path = validate_launcher(path)
     package = package_owner(path)
     if package:
-        packages = removal_plan(package, include_unused=False)
+        # A protected package must be rejected *before* asking pacman to plan
+        # a removal, otherwise a dependency error obscures the actual reason.
+        if protected_in([package]):
+            message(_("Cannot remove protected system package %s.") % package,
+                    Gtk.MessageType.WARNING,
+                    detail=_("This package is required for the desktop or system. "
+                             "Nothing was removed."))
+            return 1
+        try:
+            packages = removal_plan(package, include_unused=False)
+        except RemovalError as exc:
+            explain_pacman_preview_failure(package, exc)
+            return 1
         blocked = protected_in(packages)
         if blocked:
             message(_("Cannot remove package %s as it is required by a system package.") % package,
