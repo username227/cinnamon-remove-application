@@ -19,6 +19,12 @@ jobs:
         run: python -m py_compile usr/bin/cinnamon-remove-application usr/lib/cinnamon-remove-application/operations.py usr/lib/cinnamon-remove-application/appearance.py tests/test_operations.py tests/gui_smoke.py
       - name: Unit tests (no pacman or GTK required)
         run: python -m unittest discover -s tests -v
+      - name: Check release helper and PKGBUILD archive exclusion
+        run: |
+          bash -n scripts/update-pkgbuild-release.sh
+          git archive --format=tar HEAD | tar -tf - > archive-contents.txt
+          ! grep -Fx 'PKGBUILD' archive-contents.txt
+          grep -Fx 'usr/bin/cinnamon-remove-application' archive-contents.txt
       - name: Install GTK smoke-test dependencies
         run: sudo apt-get update && sudo apt-get install -y python3-gi gir1.2-gtk-3.0 xvfb
       - name: GTK dialog visibility smoke test (Xvfb)

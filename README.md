@@ -38,16 +38,26 @@ Only the actual pacman subprocess is launched through pkexec.
 
 ## Packaging and verification
 
-**Initial release target: v1.0.0.** The root `PKGBUILD` currently points to
-the previously tagged `v0.1.6` archive, with its pinned SHA-256 checksum
-and no Git build dependency. This is deliberate: the final source archive
-for `v1.0.0` does not exist until the release tag is created.
+**Initial release target: v1.0.0.** The root `PKGBUILD` remains a
+Git-free release recipe, initially pinned to the existing `v0.1.6`
+archive. The repository's `.gitattributes` marks `PKGBUILD export-ignore`:
+the recipe stays on `master` but is excluded from GitHub's generated
+source archives, preventing any circular source-checksum dependency.
 
-**Release order:** merge and verify the final code on `master`, create the
-`v1.0.0` tag from that commit, then update the PKGBUILD to `pkgver=1.0.0`
-and calculate the real new tarball checksum. Do not substitute `SKIP` for
-a checksum or assume the old checksum applies. Until then, `makepkg -si`
-from this PKGBUILD still builds `v0.1.6`, not the code on `master`.
+**Release order:**
+
+1. Tag the tested `master` commit `v1.0.0`.
+2. Run `bash scripts/update-pkgbuild-release.sh 1.0.0` locally. This
+   downloads the actual tagged GitHub archive, verifies its contents and
+   calculates the SHA-256 checksum, then updates only `pkgver` and
+   `sha256sums` in your local `PKGBUILD`.
+3. Review the diff and test with `makepkg -Csi`.
+4. Commit and push the tested `PKGBUILD` to `master` without moving
+   the immutable tag; then publish the GitHub Release.
+
+Until step 3, `makepkg -si` from the checked-in recipe builds `v0.1.6`.
+Don't substitute `SKIP` for a checksum. The release tarball contains
+application source; get the PKGBUILD from the repository.
 
 For the non-destructive unit tests:
 
