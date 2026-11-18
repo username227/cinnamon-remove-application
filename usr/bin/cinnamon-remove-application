@@ -22,12 +22,29 @@ from operations import (RemovalError, validate_launcher, package_owner,
 gettext.install("mint-common", "/usr/share/linuxmint/locale")
 
 
+def _style_dialog(dialog, destructive_response=None):
+    """Appearance is optional: a broken theme can never suppress the dialog."""
+    try:
+        from appearance import style_dialog
+        return style_dialog(dialog, destructive_response)
+    except Exception as exc:
+        print("cinnamon-remove-application: GTK styling failed; using native theme: "
+              + str(exc), file=sys.stderr)
+        return False
+
+
 def message(text, kind=Gtk.MessageType.ERROR,
             buttons=Gtk.ButtonsType.CLOSE, detail=None):
     dlg = Gtk.MessageDialog(parent=None, flags=Gtk.DialogFlags.MODAL,
                             message_type=kind, buttons=buttons, text=text)
     dlg.set_keep_above(True)
     dlg.set_border_width(12)
+    if buttons == Gtk.ButtonsType.YES_NO:
+        _style_dialog(dlg, Gtk.ResponseType.YES)
+    elif buttons == Gtk.ButtonsType.OK_CANCEL:
+        _style_dialog(dlg, Gtk.ResponseType.OK)
+    else:
+        _style_dialog(dlg)
     if detail:
         dlg.format_secondary_text(detail)
     response = dlg.run()
@@ -42,6 +59,7 @@ def approve_packages(packages):
                             text=_("The following packages will be removed:"))
     dlg.set_keep_above(True)
     dlg.set_border_width(12)
+    _style_dialog(dlg, Gtk.ResponseType.OK)
     model = Gtk.ListStore(str)
     for package in packages:
         model.append([package])
@@ -65,6 +83,7 @@ def perform(command):
     dlg.set_keep_above(True)
     dlg.set_deletable(False)
     dlg.set_border_width(16)
+    _style_dialog(dlg)
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
     spinner = Gtk.Spinner()
     spinner.start()
