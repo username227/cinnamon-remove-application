@@ -16,3 +16,7 @@ jobs:
         run: python -m py_compile usr/bin/cinnamon-remove-application usr/lib/cinnamon-remove-application/operations.py tests/test_operations.py
       - name: Unit tests (no pacman or GTK required)
         run: python -m unittest discover -s tests -v
+      - name: Install GTK smoke-test dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-gi gir1.2-gtk-3.0 xvfb
+      - name: GTK dialog visibility smoke test (Xvfb)
+        run: xvfb-run -a /usr/bin/python3 tests/gui_smoke.py
