@@ -27,9 +27,13 @@ class RemovalError(Exception):
     """The requested removal cannot be planned safely."""
 
 
-def run(args):
+def run(args, *, c_locale=False):
     try:
-        return subprocess.run(args, text=True, capture_output=True, check=False)
+        # Pacman's informational fields are localized; force stable English
+        # labels only for queries that we need to parse programmatically.
+        env = {**os.environ, "LC_ALL": "C"} if c_locale else None
+        return subprocess.run(args, text=True, capture_output=True,
+                              check=False, env=env)
     except OSError as exc:
         raise RemovalError(str(exc)) from exc
 
@@ -67,6 +71,36 @@ def removal_plan(package, include_unused=False):
     if not names or package not in names or any(not PACKAGE.fullmatch(name) for name in names):
         raise RemovalError("Pacman returned an invalid removal preview.")
     return [package] + [name for name in names if name != package]
+
+
+def required_by(package):
+    """List direct reverse dependencies from pacman's installed-package metadata.
+
+    This is only used to *explain* a rejected removal. Pacman's dependency
+    solver remains authoritative; the list is never used to authorize removal.
+    """
+    if not PACKAGE.fullmatch(package):
+        raise RemovalError("Invalid package name.")
+    result = run([PACMAN, "-Qi", "--", package], c_locale=True)
+    if result.returncode != 0:
+        return []
+
+    values = []
+    collecting = False
+    for line in result.stdout.splitlines():
+        if not collecting:
+            match = re.match(r"^Required By\s*:\s*(.*)$", line)
+            if match is None:
+                continue
+            collecting = True
+            values.extend(match.group(1).split())
+        elif line[:1].isspace():
+            # Pacman wraps long dependency lists onto indented lines.
+            values.extend(line.split())
+        else:
+            break
+    return list(dict.fromkeys(name for name in values
+                              if name != "None" and PACKAGE.fullmatch(name)))
 
 
 def protected_in(packages):
