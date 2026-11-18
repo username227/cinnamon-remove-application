@@ -41,6 +41,40 @@ Manual testing with Cinnamon 6.8 and a disposable leaf package is still needed.
 First confirm the displayed packages match pacman's dry-run results and cancel
 the transaction. Proceed with real uninstall tests only after review.
 
+## Optional Cinnamon-inspired dialogs (experimental)
+
+This *separate styling branch* keeps the original working GTK dialog widgets
+and window decorations. Its scoped GTK CSS changes colors, spacing, buttons,
+and the package list, while respecting Cinnamon's portal light/dark preference
+(`org.x.apps.portal color-scheme`) and using the active GTK theme as a
+fallback. It does **not** replace the dialogs with Cinnamon shell code.
+
+The default in this branch is `cinnamon`. To disable it for one terminal
+invocation:
+
+    CINNAMON_REMOVE_STYLE=native /usr/bin/cinnamon-remove-application /usr/share/applications/your-app.desktop
+
+To disable styling for the menu's Uninstall action *without reinstalling*,
+create `~/.config/cinnamon-remove-application/settings.ini`:
+
+    [appearance]
+    style = native
+
+The available values are `cinnamon` (default) and `native`. Optionally set
+`color_scheme = system`, `light`, or `dark` under `[appearance]` to override
+the system-detected palette. Environment variables
+`CINNAMON_REMOVE_STYLE` and `CINNAMON_REMOVE_COLOR_SCHEME` take precedence.
+
+A styling exception logs a warning to stderr and falls back to native GTK.
+This experimental CSS does not disable GTK's own window painting, change the
+window visual, or remove its decorations. Automated Xvfb tests check that
+native, light, dark, and error-fallback dialogs map; **manual Cinnamon Wayland
+testing is still required**.
+
+The stable development branch `modernize/cinnamon-6.8-pacman` remains at the
+known-good `0.1.3-1`. The experimental PKGBUILD fetches only
+`feature/cinnamon-dialog-styling` as `0.1.4-1`.
+
 ## Attribution and compatibility
 
 Original Linux Mint application: Linux Mint team, mintcommon.
