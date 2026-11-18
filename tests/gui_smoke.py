@@ -75,6 +75,31 @@ with tempfile.TemporaryDirectory() as config:
         assert appearance._PROVIDER is not None
         assert appearance._CACHED_SCHEME == scheme
 
+    # Test a *live* change while the actual confirmation is mapped.
+    # No package is removed: the dialog is always answered Cancel.
+    os.environ["CINNAMON_REMOVE_COLOR_SCHEME"] = "dark"
+    switched = []
+
+    def switch_theme_during_dialog():
+        dialogs = [win for win in Gtk.Window.list_toplevels()
+                   if isinstance(win, Gtk.Dialog) and win.get_mapped()]
+        if not dialogs:
+            return True
+        switched.append(("before", appearance._CACHED_SCHEME))
+        os.environ["CINNAMON_REMOVE_COLOR_SCHEME"] = "light"
+        # This is the same callback connected to Cinnamon's GSettings signal.
+        appearance._refresh_theme()
+        switched.append(("after", appearance._CACHED_SCHEME))
+        dialogs[0].response(Gtk.ResponseType.CANCEL)
+        return False
+
+    GLib.timeout_add(100, switch_theme_during_dialog)
+    assert app.approve_packages(["test-package"]) is False
+    assert switched == [("before", "dark"), ("after", "light")], switched
+    assert appearance._THEME_WATCHERS, "No system appearance signals connected"
+    css = appearance._stylesheet("dark")
+    assert "headerbar.titlebar" in css and "background-color: #242428" in css
+
     # Color scheme can come from Cinnamon's GSettings, not just an override.
     os.environ["CINNAMON_REMOVE_COLOR_SCHEME"] = "system"
 
