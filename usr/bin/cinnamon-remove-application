@@ -38,6 +38,9 @@ def message(text, kind=Gtk.MessageType.ERROR,
     dlg = Gtk.MessageDialog(parent=None, flags=Gtk.DialogFlags.MODAL,
                             message_type=kind, buttons=buttons, text=text)
     dlg.set_keep_above(True)
+    # Cancel/Close is provided inside the dialog; hide the redundant titlebar X.
+    # Keep GTK decorations and ordinary painting (especially on Wayland).
+    dlg.set_deletable(False)
     dlg.set_border_width(12)
     if buttons == Gtk.ButtonsType.YES_NO:
         _style_dialog(dlg, Gtk.ResponseType.YES)
@@ -58,6 +61,9 @@ def approve_packages(packages):
                             buttons=Gtk.ButtonsType.OK_CANCEL,
                             text=_("The following packages will be removed:"))
     dlg.set_keep_above(True)
+    # Cancel/Close is provided inside the dialog; hide the redundant titlebar X.
+    # Keep GTK decorations and ordinary painting (especially on Wayland).
+    dlg.set_deletable(False)
     dlg.set_border_width(12)
     _style_dialog(dlg, Gtk.ResponseType.OK)
     model = Gtk.ListStore(str)
