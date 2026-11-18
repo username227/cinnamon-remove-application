@@ -199,21 +199,21 @@ def explain_pacman_preview_failure(package, exc):
             dependents = []
         if dependents:
             display = dependents[:15]
-            names = "\\n".join(display)
+            names = "\n".join(display)
             remaining = len(dependents) - len(display)
             if remaining:
-                names += "\\n" + _("...and %d more") % remaining
+                names += "\n" + _("...and %d more") % remaining
             message(
                 _("Cannot uninstall %s: other packages require it.") % package,
                 Gtk.MessageType.WARNING,
-                detail=_("Installed packages listed as requiring %s:\\n\\n%s"
-                         "\\n\\nNothing was removed.") % (package, names))
+                detail=_("Installed packages listed as requiring %s:\n\n%s"
+                         "\n\nNothing was removed.") % (package, names))
         else:
             message(
                 _("Cannot uninstall %s without breaking dependencies.") % package,
                 Gtk.MessageType.WARNING,
                 detail=_("Pacman rejected the removal preview. Nothing was removed."
-                         "\\n\\n%s") % error)
+                         "\n\n%s") % error)
     else:
         message(_("Cannot preview removal of %s.") % package,
                 detail=error or _("Pacman did not return a removal plan."))
