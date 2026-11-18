@@ -51,12 +51,16 @@ def package_owner(path):
     return names[0]
 
 
-def removal_plan(package):
+def removal_plan(package, include_unused=False):
+    """Preview an exact, non-cascading removal transaction.
+
+    Dependencies are *only* included if the user explicitly opts in.
+    Never use -c: it would cascade into applications that depend on the target.
+    """
     if not PACKAGE.fullmatch(package):
         raise RemovalError("Invalid package name.")
-    # Print, do not execute: -c includes reverse dependents and -s considers
-    # newly unneeded dependencies, matching the previous Mint/Manjaro flow.
-    result = run([PACMAN, "-Rcsp", "--print-format", "%n", "--", package])
+    flags = "-Rsp" if include_unused else "-Rp"
+    result = run([PACMAN, flags, "--print-format", "%n", "--", package])
     if result.returncode != 0:
         raise RemovalError(result.stderr.strip() or "Pacman removal preview failed.")
     names = list(dict.fromkeys(result.stdout.splitlines()))
@@ -105,6 +109,18 @@ def flatpak_removal_command(name, scope):
         raise RemovalError("Invalid Flatpak target.")
     # Flatpak performs its own polkit authentication for system installs.
     return [FLATPAK, "uninstall", scope, "--noninteractive", "--assumeyes", name]
+
+
+def flatpak_unused_command(scope):
+    """Clean unused refs only in the installation the user selected.
+
+    This is a separate, explicitly confirmed action after app removal.
+    Flatpak decides which refs are unused; no --delete-data is ever used.
+    """
+    if scope not in ("--user", "--system"):
+        raise RemovalError("Invalid Flatpak installation scope.")
+    return [FLATPAK, "uninstall", scope, "--unused",
+            "--noninteractive", "--assumeyes"]
 
 
 def unowned_launcher_command(path):
