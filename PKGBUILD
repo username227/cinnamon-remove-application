@@ -1,7 +1,7 @@
 # Maintainer: username227
 # Development test PKGBUILD; not a tagged AUR release.
 pkgname=cinnamon-remove-application
-pkgver=0.1.4
+pkgver=0.1.5
 pkgrel=1
 pkgdesc='Native Cinnamon Uninstall menu handler for Arch using pacman'
 arch=('any')
