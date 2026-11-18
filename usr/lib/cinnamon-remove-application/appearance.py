@@ -163,6 +163,19 @@ def _stylesheet(scheme):
     .cinnamon-remove-dialog button.cinnamon-remove-destructive label {
         color: white;
     }
+    /* GTK themes can paint column-header buttons light even when the
+       TreeView is dark. Recolor the header *background*, preserving the
+       existing high-contrast text color. */
+    .cinnamon-remove-dialog treeview.view header button,
+    .cinnamon-remove-dialog treeview.view header button:hover,
+    .cinnamon-remove-dialog treeview.view header button:active,
+    .cinnamon-remove-dialog treeview.view header button:backdrop {
+        background-image: none;
+        background-color: %(button)s;
+        box-shadow: none;
+        border-color: %(border)s;
+        color: %(text)s;
+    }
     .cinnamon-remove-dialog scrolledwindow,
     .cinnamon-remove-dialog treeview.view {
         background-color: %(list)s;
