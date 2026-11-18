@@ -46,6 +46,37 @@ class TestPacman(unittest.TestCase):
             with self.assertRaises(ops.RemovalError):
                 ops.removal_plan("app")
 
+    def test_direct_reverse_dependents_reported_for_explanation(self):
+        info = (
+            "Name            : shared-lib\n"
+            "Required By     : desktop-tool media-player\n"
+            "                  backup-client\n"
+            "Optional For    : None\n"
+        )
+        fake = subprocess.CompletedProcess([], 0, info, "")
+        with patch.object(ops, "run", return_value=fake) as runner:
+            self.assertEqual(ops.required_by("shared-lib"),
+                             ["desktop-tool", "media-player", "backup-client"])
+            self.assertEqual(runner.call_args.args[0],
+                             [ops.PACMAN, "-Qi", "--", "shared-lib"])
+            self.assertTrue(runner.call_args.kwargs["c_locale"])
+
+    def test_reverse_dependents_none_and_query_failure(self):
+        for result in (
+            subprocess.CompletedProcess([], 0, "Required By     : None\\n", ""),
+            subprocess.CompletedProcess([], 1, "", "package not found"),
+        ):
+            with patch.object(ops, "run", return_value=result):
+                self.assertEqual(ops.required_by("shared-lib"), [])
+
+    def test_reverse_dependents_are_never_removal_targets(self):
+        fake = subprocess.CompletedProcess(
+            [], 0, "Required By     : cinnamon other-app\\n", "")
+        with patch.object(ops, "run", return_value=fake):
+            self.assertEqual(ops.required_by("shared-lib"), ["cinnamon", "other-app"])
+        # This diagnostic cannot expand the actual pacman transaction.
+        self.assertEqual(ops.removal_command(["shared-lib"])[-1:], ["shared-lib"])
+
     def test_core_system_protection(self):
         self.assertEqual(ops.protected_in(["app", "cinnamon"]), ["cinnamon"])
         with self.assertRaises(ops.RemovalError):
