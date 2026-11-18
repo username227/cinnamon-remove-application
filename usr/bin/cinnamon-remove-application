@@ -11,7 +11,7 @@ import threading
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gdk, Gio, GLib, Gtk
+from gi.repository import GLib, Gtk
 
 sys.path.insert(0, "/usr/lib/cinnamon-remove-application")
 from operations import (RemovalError, validate_launcher, package_owner,
@@ -22,158 +22,12 @@ from operations import (RemovalError, validate_launcher, package_owner,
 gettext.install("mint-common", "/usr/share/linuxmint/locale")
 
 
-# Cinnamon 6.8 has a separate St/CSS theme for shell dialogs. A standalone
-# GTK 3 client cannot inherit that theme, so use a small scoped GTK stylesheet.
-# The palette follows the shipped Cinnamon shell; dark/light preference comes
-# from Cinnamon's own appearance setting rather than the shell theme.
-_CSS_PROVIDER = None
-_THEME_SETTINGS = []
-_DARK_STYLE = {
-    "surface": "#242428",
-    "text": "#ffffff",
-    "border": "#333337",
-    "button": "#39393c",
-    "button_hover": "#454549",
-    "list": "#303034",
-    "accent": "#3584e4",
-    "destructive": "#c01c28",
-    "destructive_hover": "#d12c37",
-}
-_LIGHT_STYLE = {
-    "surface": "#ededef",
-    "text": "#242428",
-    "border": "#b8b8be",
-    "button": "#d2d2d6",
-    "button_hover": "#bcbcc2",
-    "list": "#ffffff",
-    "accent": "#3584e4",
-    "destructive": "#c01c28",
-    "destructive_hover": "#dc3542",
-}
-
-
-def _get_settings(schema_id):
-    try:
-        source = Gio.SettingsSchemaSource.get_default()
-        if source is not None and source.lookup(schema_id, True):
-            return Gio.Settings.new(schema_id)
-    except (AttributeError, GLib.Error):
-        pass
-    return None
-
-
-def _is_dark():
-    # 0: no preference, 1: dark, 2: light (Cinnamon's cs_themes.py).
-    portal = _get_settings("org.x.apps.portal")
-    if portal is not None:
-        value = portal.get_enum("color-scheme")
-        if value in (1, 2):
-            return value == 1
-    # 'Mixed' mode: follow the active GTK theme, not Cinnamon's St theme.
-    interface = _get_settings("org.cinnamon.desktop.interface")
-    if interface is not None:
-        name = interface.get_string("gtk-theme")
-    else:
-        name = Gtk.Settings.get_default().get_property("gtk-theme-name")
-    return "dark" in (name or "").lower()
-
-
-def _update_dialog_css(*_unused):
-    if _CSS_PROVIDER is None:
-        return
-    colors = _DARK_STYLE if _is_dark() else _LIGHT_STYLE
-    css = r"""
-    window.cinnamon-remove-dialog {
-        background-color: %(surface)s;
-        color: %(text)s;
-        border: 1px solid %(border)s;
-        border-radius: 18px;
-    }
-    window.cinnamon-remove-dialog .dialog-vbox,
-    window.cinnamon-remove-dialog .dialog-action-area,
-    window.cinnamon-remove-dialog box {
-        background-color: transparent;
-    }
-    window.cinnamon-remove-dialog label {
-        color: %(text)s;
-    }
-    window.cinnamon-remove-dialog button {
-        background-image: none;
-        box-shadow: none;
-        background-color: %(button)s;
-        border: 1px solid %(border)s;
-        border-radius: 10px;
-        color: %(text)s;
-        min-height: 30px;
-        min-width: 110px;
-        padding: 5px 14px;
-        font-weight: bold;
-    }
-    window.cinnamon-remove-dialog button:hover {
-        background-color: %(button_hover)s;
-    }
-    window.cinnamon-remove-dialog button.destructive-action {
-        background-color: %(destructive)s;
-        color: white;
-    }
-    window.cinnamon-remove-dialog button.destructive-action:hover {
-        background-color: %(destructive_hover)s;
-    }
-    window.cinnamon-remove-dialog scrolledwindow,
-    window.cinnamon-remove-dialog treeview.view {
-        background-color: %(list)s;
-        color: %(text)s;
-        border-radius: 8px;
-    }
-    window.cinnamon-remove-dialog treeview.view:selected {
-        background-color: %(accent)s;
-        color: white;
-    }
-    """ % colors
-    _CSS_PROVIDER.load_from_data(css.encode("utf-8"))
-
-
-def _style_dialog(dialog, destructive_response=None):
-    global _CSS_PROVIDER
-    dialog.get_style_context().add_class("cinnamon-remove-dialog")
-    # Retain GTK window decorations until frameless styling is proven on
-    # Cinnamon Wayland. Hiding a titlebar must never hide the whole dialog.
-    dialog.set_position(Gtk.WindowPosition.CENTER)
-    dialog.set_border_width(16)
-    dialog.set_keep_above(True)
-    # Allow GTK to paint the window normally. set_app_paintable(True) suppresses
-    # GTK's automatic background painting and can make frameless dialogs fully
-    # transparent under Cinnamon/Wayland, even when a CSS background is set.
-    if destructive_response is not None:
-        button = dialog.get_widget_for_response(destructive_response)
-        if button is not None:
-            button.get_style_context().add_class("destructive-action")
-    if _CSS_PROVIDER is None:
-        _CSS_PROVIDER = Gtk.CssProvider()
-        Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(), _CSS_PROVIDER,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        # Refresh existing dialogs when appearance changes.
-        for schema, key in [
-            ("org.x.apps.portal", "color-scheme"),
-            ("org.cinnamon.desktop.interface", "gtk-theme"),
-        ]:
-            settings = _get_settings(schema)
-            if settings is not None:
-                settings.connect("changed::" + key, _update_dialog_css)
-                _THEME_SETTINGS.append(settings)
-        Gtk.Settings.get_default().connect(
-            "notify::gtk-theme-name", _update_dialog_css)
-    _update_dialog_css()
-
-
-
 def message(text, kind=Gtk.MessageType.ERROR,
             buttons=Gtk.ButtonsType.CLOSE, detail=None):
     dlg = Gtk.MessageDialog(parent=None, flags=Gtk.DialogFlags.MODAL,
                             message_type=kind, buttons=buttons, text=text)
-    _style_dialog(dlg, Gtk.ResponseType.YES if buttons == Gtk.ButtonsType.YES_NO else
-                  Gtk.ResponseType.OK if buttons == Gtk.ButtonsType.OK_CANCEL else None)
+    dlg.set_keep_above(True)
+    dlg.set_border_width(12)
     if detail:
         dlg.format_secondary_text(detail)
     response = dlg.run()
@@ -186,7 +40,8 @@ def approve_packages(packages):
                             message_type=Gtk.MessageType.WARNING,
                             buttons=Gtk.ButtonsType.OK_CANCEL,
                             text=_("The following packages will be removed:"))
-    _style_dialog(dlg, Gtk.ResponseType.OK)
+    dlg.set_keep_above(True)
+    dlg.set_border_width(12)
     model = Gtk.ListStore(str)
     for package in packages:
         model.append([package])
@@ -207,8 +62,9 @@ def perform(command):
     """Leave GTK responsive while polkit and pacman run."""
     dlg = Gtk.Dialog(title=_("Removing application"), parent=None,
                      flags=Gtk.DialogFlags.MODAL)
-    _style_dialog(dlg)
+    dlg.set_keep_above(True)
     dlg.set_deletable(False)
+    dlg.set_border_width(16)
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
     spinner = Gtk.Spinner()
     spinner.start()
