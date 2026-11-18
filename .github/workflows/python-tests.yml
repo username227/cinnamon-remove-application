@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - modernize/cinnamon-6.8-pacman
+      - feature/cinnamon-dialog-styling
   pull_request:
 jobs:
   test:
@@ -13,7 +14,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Check Python syntax
-        run: python -m py_compile usr/bin/cinnamon-remove-application usr/lib/cinnamon-remove-application/operations.py tests/test_operations.py
+        run: python -m py_compile usr/bin/cinnamon-remove-application usr/lib/cinnamon-remove-application/operations.py usr/lib/cinnamon-remove-application/appearance.py tests/test_operations.py tests/gui_smoke.py
       - name: Unit tests (no pacman or GTK required)
         run: python -m unittest discover -s tests -v
       - name: Install GTK smoke-test dependencies
