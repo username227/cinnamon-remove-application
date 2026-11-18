@@ -1,6 +1,6 @@
 # Maintainer: username227 [gfrank227 [at] gmail [dot] com]
 pkgname=cinnamon-remove-application
-pkgver=0.1.6
+pkgver=1.0.0
 pkgrel=1
 pkgdesc='Native Cinnamon Uninstall menu handler for Arch using pacman'
 arch=('any')
@@ -8,8 +8,8 @@ url='https://github.com/username227/cinnamon-remove-application'
 license=('GPL-2.0-or-later')
 depends=('cinnamon' 'python' 'python-gobject' 'gtk3' 'polkit' 'pacman')
 optdepends=('flatpak: Flatpak uninstall support' 'mint-translations: dialog translations')
-source=("${pkgname}-v${pkgver}.tar.gz::https://github.com/username227/cinnamon-remove-application/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('71cc8d06e446830dd978b589db6eafd137114f9939230274264fceb936222c3e')
+source=("${pkgname}-v${pkgver}.tar.gz::https://github.com/username227/cinnamon-remove-application/archive/refs/tags/${pkgver}.tar.gz")
+sha256sums=('137e6a54e2bbe630f227abea89a0f44c293995cac88886eec6caedc95006995c')
 
 package() {
   install -Dm755 "$srcdir/$pkgname-${pkgver}/usr/bin/cinnamon-remove-application" -t "$pkgdir/usr/bin/"
