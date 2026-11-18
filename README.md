@@ -45,11 +45,11 @@ the transaction. Proceed with real uninstall tests only after review.
 
 This *separate styling branch* keeps the original working GTK dialog widgets
 and window decorations. Its scoped GTK CSS changes colors, spacing, buttons,
-and the package list, while respecting Cinnamon's portal light/dark preference
+and the package list and GTK titlebar, while respecting Cinnamon's portal light/dark preference
 (`org.x.apps.portal color-scheme`) and using the active GTK theme as a
 fallback. It does **not** replace the dialogs with Cinnamon shell code.
 
-The default in this branch is `cinnamon`. To disable it for one terminal
+The color palette updates immediately when Cinnamon's portal light/dark preference or GTK application theme changes, including while a dialog is open. The default in this branch is `cinnamon`. To disable it for one terminal
 invocation:
 
     CINNAMON_REMOVE_STYLE=native /usr/bin/cinnamon-remove-application /usr/share/applications/your-app.desktop
@@ -73,7 +73,7 @@ testing is still required**.
 
 The stable development branch `modernize/cinnamon-6.8-pacman` remains at the
 known-good `0.1.3-1`. The experimental PKGBUILD fetches only
-`feature/cinnamon-dialog-styling` as `0.1.4-1`.
+`feature/cinnamon-dialog-styling` as `0.1.6-1`.
 
 ## Attribution and compatibility
 
