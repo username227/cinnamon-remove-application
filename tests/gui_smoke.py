@@ -99,6 +99,13 @@ with tempfile.TemporaryDirectory() as config:
     assert appearance._THEME_WATCHERS, "No system appearance signals connected"
     css = appearance._stylesheet("dark")
     assert "headerbar.titlebar" in css and "background-color: #242428" in css
+    # GTK3 column headers are buttons beneath the TreeView's 'header' CSS node.
+    # Their backgrounds must follow the palette, not the (possibly light) GTK theme.
+    for scheme, background in (("dark", "#39393c"), ("light", "#dedee2")):
+        sheet = appearance._stylesheet(scheme)
+        assert "treeview.view header button" in sheet
+        assert "background-color: " + background in sheet
+        assert "color: " + appearance._PALETTES[scheme]["text"] in sheet
 
     # Color scheme can come from Cinnamon's GSettings, not just an override.
     os.environ["CINNAMON_REMOVE_COLOR_SCHEME"] = "system"
