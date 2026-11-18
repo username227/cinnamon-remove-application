@@ -24,11 +24,21 @@ class TestPacman(unittest.TestCase):
         with patch.object(ops, "run", return_value=fake):
             self.assertIsNone(ops.package_owner("/tmp/example.desktop"))
 
-    def test_preview_includes_dependents_and_dependencies(self):
-        fake = subprocess.CompletedProcess([], 0, "app\ndep\nother\ndep\n", "")
+    def test_default_preview_removes_only_selected_application(self):
+        fake = subprocess.CompletedProcess([], 0, "app\n", "")
         with patch.object(ops, "run", return_value=fake) as runner:
-            self.assertEqual(ops.removal_plan("app"), ["app", "dep", "other"])
-            self.assertIn("-Rcsp", runner.call_args.args[0])
+            self.assertEqual(ops.removal_plan("app"), ["app"])
+            self.assertEqual(runner.call_args.args[0],
+                             [ops.PACMAN, "-Rp", "--print-format", "%n", "--", "app"])
+
+    def test_opted_in_preview_includes_newly_unused_dependencies(self):
+        fake = subprocess.CompletedProcess([], 0, "app\ndep\ndep\n", "")
+        with patch.object(ops, "run", return_value=fake) as runner:
+            self.assertEqual(ops.removal_plan("app", include_unused=True),
+                             ["app", "dep"])
+            self.assertEqual(runner.call_args.args[0],
+                             [ops.PACMAN, "-Rsp", "--print-format", "%n", "--", "app"])
+            self.assertNotIn("c", runner.call_args.args[0][1])
 
     def test_preview_failure(self):
         fake = subprocess.CompletedProcess([], 1, "", "error")
@@ -62,6 +72,26 @@ class TestPacman(unittest.TestCase):
                  patch.object(ops, "run", return_value=fake):
                 self.assertEqual(ops.flatpak_target(str(desktop)),
                                  ("org.example.App", "--user"))
+
+    def test_flatpak_unused_cleanup_scoped_explicitly(self):
+        self.assertEqual(
+            ops.flatpak_unused_command("--user"),
+            [ops.FLATPAK, "uninstall", "--user", "--unused",
+             "--noninteractive", "--assumeyes"])
+        self.assertEqual(
+            ops.flatpak_unused_command("--system"),
+            [ops.FLATPAK, "uninstall", "--system", "--unused",
+             "--noninteractive", "--assumeyes"])
+        for bad in ("", "--all", "--installation=other", "--system --delete-data"):
+            with self.assertRaises(ops.RemovalError):
+                ops.flatpak_unused_command(bad)
+
+    def test_flatpak_removal_never_deletes_user_data(self):
+        for name, scope in (("org.example.App", "--user"),
+                            ("org.example.App", "--system")):
+            cmd = ops.flatpak_removal_command(name, scope)
+            self.assertNotIn("--delete-data", cmd)
+            self.assertNotIn("--unused", cmd)
 
     def test_no_arbitrary_file_deletion(self):
         with tempfile.TemporaryDirectory() as root:
