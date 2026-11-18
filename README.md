@@ -17,7 +17,10 @@ dialog flow with a Python 3 implementation. There are no Pamac dependencies.
   `pacman -Rsp --print-format %n` before confirmation.
 - Confirm the *complete* selected package set with a GTK 3 dialog, refuse
   protected packages, and remove only exactly those confirmed targets.
-- Refuse to proceed if the plan includes protected base or Cinnamon packages.
+- Reject protected base and Cinnamon packages **before** invoking pacman's
+  removal preview. If pacman rejects a removal because another installed
+  package requires it, show that package's direct reverse dependents from
+  `pacman -Qi` and explain that nothing was removed. No cascade is attempted.
 - Authenticate via pkexec and remove *exactly* those approved packages with
   pacman -R --noconfirm. Pacman still checks dependency integrity.
 - Recognize Flatpak-exported desktop launchers, if Flatpak is installed.
