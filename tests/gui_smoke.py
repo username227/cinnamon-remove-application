@@ -3,6 +3,7 @@
 Verifies the same style initializer used by all confirmation/error dialogs.
 """
 import importlib.util
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import sys
 
@@ -12,9 +13,9 @@ from gi.repository import Gtk
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / "usr/lib/cinnamon-remove-application"))
-spec = importlib.util.spec_from_file_location(
-    "cinnamon_remove_application", root / "usr/bin/cinnamon-remove-application"
-)
+path = root / "usr/bin/cinnamon-remove-application"
+loader = SourceFileLoader("cinnamon_remove_application", str(path))
+spec = importlib.util.spec_from_loader("cinnamon_remove_application", loader)
 app = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(app)
 
