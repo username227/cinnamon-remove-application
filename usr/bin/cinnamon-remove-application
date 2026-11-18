@@ -1,107 +1,144 @@
-#!/usr/bin/python2
+#!/usr/bin/python3
+"""Cinnamon native Uninstall menu handler for pacman-based systems.
 
-# authors: Linux Mint team
-#          Giulio Girardi (rapgenic)
-#
-# Arch linux version of cinnamon-remove-application (enables the uninstall option in the right click Cinnamon application menu)
-#
-# version 0.0.3
+Based on the Linux Mint implementation and original Arch port by Giulio Girardi.
+SPDX-License-Identifier: GPL-2.0-or-later
+"""
+import gettext
+import subprocess
+import sys
+import threading
 
 import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gtk
 
-import sys
-import string
-import os
-import commands
-import threading
-import tempfile
-import gettext
-import re
+sys.path.insert(0, "/usr/lib/cinnamon-remove-application")
+from operations import (RemovalError, validate_launcher, package_owner,
+                        removal_plan, protected_in, removal_command,
+                        flatpak_target, flatpak_removal_command,
+                        unowned_launcher_command)
 
-from subprocess import Popen
-
-# i18n
 gettext.install("mint-common", "/usr/share/linuxmint/locale")
 
 
-class RemoveExecuter(threading.Thread):
+def message(text, kind=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.CLOSE, detail=None):
+    dlg = Gtk.MessageDialog(parent=None, flags=Gtk.DialogFlags.MODAL,
+                            message_type=kind, buttons=buttons, text=text)
+    dlg.set_keep_above(True)
+    dlg.set_border_width(12)
+    if detail:
+        dlg.format_secondary_text(detail)
+    response = dlg.run()
+    dlg.destroy()
+    return response
 
-    def __init__(self, package):
-        threading.Thread.__init__(self)
-        self.package = package
 
-    def run(self):
-        cmd = ["pkexec", "/usr/bin/pacman", "-Rc", "--noconfirm", "--noprogressbar", self.package]
-        comnd = Popen(cmd)
-        sys.exit(comnd.wait())
+def approve_packages(packages):
+    dlg = Gtk.MessageDialog(parent=None, flags=Gtk.DialogFlags.MODAL,
+                            message_type=Gtk.MessageType.WARNING,
+                            buttons=Gtk.ButtonsType.OK_CANCEL,
+                            text=_("The following packages will be removed:"))
+    dlg.set_keep_above(True)
+    dlg.set_border_width(12)
+    model = Gtk.ListStore(str)
+    for package in packages:
+        model.append([package])
+    view = Gtk.TreeView(model=model)
+    view.append_column(Gtk.TreeViewColumn(_("Packages to be removed"),
+                                          Gtk.CellRendererText(), text=0))
+    scroll = Gtk.ScrolledWindow()
+    scroll.set_size_request(340, 180)
+    scroll.add(view)
+    dlg.get_content_area().add(scroll)
+    dlg.show_all()
+    approved = dlg.run() == Gtk.ResponseType.OK
+    dlg.destroy()
+    return approved
 
 
-class ArchRemoveWindow:
+def perform(command):
+    """Leave GTK responsive while polkit and pacman run."""
+    dlg = Gtk.Dialog(title=_("Removing application"), parent=None,
+                     flags=Gtk.DialogFlags.MODAL)
+    dlg.set_keep_above(True)
+    dlg.set_deletable(False)
+    dlg.set_border_width(16)
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    spinner = Gtk.Spinner()
+    spinner.start()
+    row.pack_start(spinner, False, False, 0)
+    row.pack_start(Gtk.Label(label=_("Removing application…")), True, True, 0)
+    dlg.get_content_area().add(row)
+    result = {}
 
-    def __init__(self, desktopFile):
-        self.desktopFile = desktopFile
+    def worker():
+        try:
+            result["process"] = subprocess.run(
+                command, text=True, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, check=False)
+        except OSError as exc:
+            result["error"] = str(exc)
+        GLib.idle_add(dlg.response, Gtk.ResponseType.OK)
 
-        (status, package) = commands.getstatusoutput("pacman -Qoq " + self.desktopFile)
+    dlg.show_all()
+    threading.Thread(target=worker, daemon=True).start()
+    dlg.run()
+    spinner.stop()
+    dlg.destroy()
+    if "error" in result:
+        message(_("Could not start removal."), detail=result["error"])
+        return False
+    process = result.get("process")
+    if process is None or process.returncode != 0:
+        output = process.stdout if process else ""
+        message(_("Failed to remove application."),
+                detail=(output or _("Authentication cancelled or removal failed."))[-5000:])
+        return False
+    return True
 
-        if status != 0:
-            warnDlg = Gtk.MessageDialog(None, 0, Gtk.MessageType.WARNING, Gtk.ButtonsType.YES_NO, _("This menu item is not associated to any package. Do you want to remove it from the menu anyway?"))
-            warnDlg.vbox.set_spacing(10)
-            response = warnDlg.run()
-            if response == Gtk.ResponseType.YES:
-                print("removing '%s'" % self.desktopFile)
-                os.system("rm -f '%s'" % self.desktopFile)
-                os.system("rm -f '%s.desktop'" % self.desktopFile)
-            warnDlg.destroy()
-            sys.exit(0)
 
-        # package = re.search("(?<=\/)\w+", output).group(0)
+def main(path):
+    path = validate_launcher(path)
+    package = package_owner(path)
+    if package:
+        packages = removal_plan(package)
+        blocked = protected_in(packages)
+        if blocked:
+            message(_("Cannot remove package %s as it is required by a system package.") % package,
+                    detail=", ".join(blocked))
+            return 1
+        if not approve_packages(packages):
+            return 0
+        return 0 if perform(removal_command(packages)) else 1
 
-        warnDlg = Gtk.MessageDialog(None, 0, Gtk.MessageType.WARNING, Gtk.ButtonsType.OK_CANCEL, _("The following packages will be removed:"))
-        warnDlg.vbox.set_spacing(10)
+    flatpak = flatpak_target(path)
+    if flatpak:
+        name, scope = flatpak
+        answer = message(_("Uninstall Flatpak application %s?") % name,
+                         Gtk.MessageType.QUESTION, Gtk.ButtonsType.OK_CANCEL,
+                         _("Installation: %s") % scope[2:])
+        if answer != Gtk.ResponseType.OK:
+            return 0
+        return 0 if perform(flatpak_removal_command(name, scope)) else 1
 
-        treeview = Gtk.TreeView()
-        column1 = Gtk.TreeViewColumn(_("Packages to be removed"))
-        renderer = Gtk.CellRendererText()
-        column1.pack_start(renderer, False)
-        column1.add_attribute(renderer, "text", 0)
-        treeview.append_column(column1)
-
-        # packages = []
-        model = Gtk.ListStore(str)
-        dependenciesString = commands.getoutput("pacman -Rpc " + package)
-        dependencies = string.split(dependenciesString, "\n")
-        for dependency in dependencies:
-            # dependency = dependency.replace("Remv ", "")
-            model.append([dependency])
-            # packages.append(dependency.split()[0])
-        treeview.set_model(model)
-        treeview.show()
-
-        scrolledwindow = Gtk.ScrolledWindow()
-        # scrolledwindow.set_shadow_type(Gtk.ShadowType.ETCHED_OUT)
-        scrolledwindow.set_size_request(150, 150)
-        scrolledwindow.add(treeview)
-        scrolledwindow.show()
-
-        warnDlg.get_content_area().add(scrolledwindow)
-
-        response = warnDlg.run()
-        if response == Gtk.ResponseType.OK:
-            executer = RemoveExecuter(package)
-            executer.start()
-            executer.join()
-            sys.exit(0)
-        elif response == Gtk.ResponseType.CANCEL:
-            sys.exit(0)
-        warnDlg.destroy()
+    answer = message(
+        _("This menu item is not associated to any package. "
+          "Do you want to remove it from the menu anyway?"),
+        Gtk.MessageType.WARNING, Gtk.ButtonsType.YES_NO, path)
+    if answer != Gtk.ResponseType.YES:
+        return 0
+    return 0 if perform(unowned_launcher_command(path)) else 1
 
 
 if __name__ == "__main__":
-    # Exit if the given path does not exist
-    if len(sys.argv) < 2 or not os.path.exists(sys.argv[1]):
+    if len(sys.argv) != 2:
+        print("Usage: cinnamon-remove-application FILE.desktop", file=sys.stderr)
+        sys.exit(2)
+    try:
+        sys.exit(main(sys.argv[1]))
+    except (OSError, RemovalError) as exc:
+        message(_("Cannot remove application."), detail=str(exc))
         sys.exit(1)
-
-    mainwin = ArchRemoveWindow(sys.argv[1])
 
