@@ -32,6 +32,12 @@ def capture_and_cancel(response=Gtk.ResponseType.CANCEL):
         for window in Gtk.Window.list_toplevels():
             if isinstance(window, Gtk.Dialog) and window.get_visible():
                 assert not window.get_deletable(), "Redundant titlebar X still enabled"
+                # Both cleanup checkboxes must start unchecked.
+                checks = [child for child in window.get_content_area().get_children()
+                          if isinstance(child, Gtk.CheckButton)]
+                assert all(not check.get_active() for check in checks), (
+                    "A cleanup checkbox was selected by default"
+                )
                 style = window.get_style_context()
                 ok_button = window.get_widget_for_response(Gtk.ResponseType.OK)
                 for button in window.get_action_area().get_children():
@@ -62,7 +68,8 @@ with tempfile.TemporaryDirectory() as config:
     # First verify the exact unstyled appearance we know works in Cinnamon.
     os.environ["CINNAMON_REMOVE_STYLE"] = "native"
     seen = capture_and_cancel()
-    assert app.approve_packages(["test-package"]) is False
+    assert app.approve_packages(
+        ["test-package"], cleanup_plan=lambda: ["test-package", "unused-dep"]) is None
     assert seen == [{"mapped": True, "styled": False, "destructive": False}], seen
 
     # Exercise both palettes through the actual confirmation dialog.
@@ -70,7 +77,8 @@ with tempfile.TemporaryDirectory() as config:
     for scheme in ("light", "dark"):
         os.environ["CINNAMON_REMOVE_COLOR_SCHEME"] = scheme
         seen = capture_and_cancel()
-        assert app.approve_packages(["test-package"]) is False
+        assert app.approve_packages(
+        ["test-package"], cleanup_plan=lambda: ["test-package", "unused-dep"]) is None
         assert seen == [{"mapped": True, "styled": True, "destructive": True}], seen
         assert appearance._PROVIDER is not None
         assert appearance._CACHED_SCHEME == scheme
@@ -94,7 +102,8 @@ with tempfile.TemporaryDirectory() as config:
         return False
 
     GLib.timeout_add(100, switch_theme_during_dialog)
-    assert app.approve_packages(["test-package"]) is False
+    assert app.approve_packages(
+        ["test-package"], cleanup_plan=lambda: ["test-package", "unused-dep"]) is None
     assert switched == [("before", "dark"), ("after", "light")], switched
     assert appearance._THEME_WATCHERS, "No system appearance signals connected"
     css = appearance._stylesheet("dark")
@@ -128,14 +137,16 @@ with tempfile.TemporaryDirectory() as config:
     config_file.write_text("[appearance]\nstyle = native\n", encoding="utf-8")
     os.environ.pop("CINNAMON_REMOVE_STYLE")
     seen = capture_and_cancel()
-    assert app.approve_packages(["test-package"]) is False
+    assert app.approve_packages(
+        ["test-package"], cleanup_plan=lambda: ["test-package", "unused-dep"]) is None
     assert seen == [{"mapped": True, "styled": False, "destructive": False}], seen
 
     # A CSS/theme exception must not stop the confirmation dialog from mapping.
     os.environ["CINNAMON_REMOVE_STYLE"] = "cinnamon"
     with mock.patch.object(appearance, "style_dialog", side_effect=RuntimeError("test failure")):
         seen = capture_and_cancel()
-        assert app.approve_packages(["test-package"]) is False
+        assert app.approve_packages(
+        ["test-package"], cleanup_plan=lambda: ["test-package", "unused-dep"]) is None
         assert seen == [{"mapped": True, "styled": False, "destructive": False}], seen
 
     # Even in an error path, the message dialog must remain visible.
@@ -144,4 +155,107 @@ with tempfile.TemporaryDirectory() as config:
     app.message("Safe smoke test")
     assert seen[0]["mapped"] and seen[0]["styled"], seen
 
-print("GTK native/light/dark/fallback dialogs all mapped successfully")
+# Confirming the default pacman dialog must authorize the app only.
+os.environ["CINNAMON_REMOVE_STYLE"] = "cinnamon"
+os.environ["CINNAMON_REMOVE_COLOR_SCHEME"] = "dark"
+capture_and_cancel(Gtk.ResponseType.OK)
+assert app.approve_packages(
+    ["test-package"], cleanup_plan=lambda: ["test-package", "unused-dep"]
+) == ["test-package"]
+
+# Opting in must update the exact visible package list before confirmation.
+selection = []
+
+def accept_pacman_dependencies():
+    for window in Gtk.Window.list_toplevels():
+        if not isinstance(window, Gtk.Dialog) or not window.get_mapped():
+            continue
+        children = window.get_content_area().get_children()
+        checks = [w for w in children if isinstance(w, Gtk.CheckButton)]
+        if not checks:
+            continue
+        check = checks[0]
+        assert not check.get_active()
+        check.set_active(True)
+        scrolls = [w for w in children if isinstance(w, Gtk.ScrolledWindow)]
+        assert len(scrolls) == 1
+        view = scrolls[0].get_child()
+        selection.extend(row[0] for row in view.get_model())
+        window.response(Gtk.ResponseType.OK)
+        return False
+    return True
+
+GLib.timeout_add(100, accept_pacman_dependencies)
+assert app.approve_packages(
+    ["test-package"], cleanup_plan=lambda: ["test-package", "unused-dep"]
+) == ["test-package", "unused-dep"]
+assert selection == ["test-package", "unused-dep"], selection
+
+# A dangerous dependency preview must be rejected, without authorizing it.
+with mock.patch.object(app, "message") as fake_warning:
+    def reject_dangerous_plan():
+        for window in Gtk.Window.list_toplevels():
+            if not isinstance(window, Gtk.Dialog) or not window.get_mapped():
+                continue
+            checks = [w for w in window.get_content_area().get_children()
+                      if isinstance(w, Gtk.CheckButton)]
+            if not checks:
+                continue
+            checks[0].set_active(True)
+            assert not checks[0].get_active()
+            window.response(Gtk.ResponseType.CANCEL)
+            return False
+        return True
+    GLib.timeout_add(100, reject_dangerous_plan)
+    assert app.approve_packages(
+        ["test-package"], cleanup_plan=lambda: ["test-package", "cinnamon"]
+    ) is None
+    assert fake_warning.call_count == 1
+
+# Flatpak checkbox likewise begins unchecked; explicitly checking it is
+# separately reflected in the approval result, without performing any removal.
+flatpak_seen = capture_and_cancel()
+assert app.approve_flatpak("org.example.App", "--user") == (False, False)
+assert flatpak_seen and flatpak_seen[0]["mapped"]
+checked_flatpak = []
+
+def accept_flatpak_cleanup():
+    for window in Gtk.Window.list_toplevels():
+        if not isinstance(window, Gtk.Dialog) or not window.get_mapped():
+            continue
+        checks = [w for w in window.get_content_area().get_children()
+                  if isinstance(w, Gtk.CheckButton)]
+        if not checks:
+            continue
+        assert not checks[0].get_active()
+        checks[0].set_active(True)
+        checked_flatpak.append(checks[0].get_active())
+        window.response(Gtk.ResponseType.OK)
+        return False
+    return True
+
+GLib.timeout_add(100, accept_flatpak_cleanup)
+assert app.approve_flatpak("org.example.App", "--user") == (True, True)
+assert checked_flatpak == [True]
+
+# Mock the full routing so that neither pacman nor Flatpak actually run.
+with mock.patch.object(app, "validate_launcher", return_value="/fake.desktop"), \
+     mock.patch.object(app, "package_owner", return_value=None), \
+     mock.patch.object(app, "flatpak_target", return_value=("org.example.App", "--user")), \
+     mock.patch.object(app, "perform", return_value=True) as perform_mock, \
+     mock.patch.object(app, "approve_flatpak", return_value=(True, False)):
+    assert app.main("/fake.desktop") == 0
+    assert perform_mock.call_count == 1
+
+with mock.patch.object(app, "validate_launcher", return_value="/fake.desktop"), \
+     mock.patch.object(app, "package_owner", return_value=None), \
+     mock.patch.object(app, "flatpak_target", return_value=("org.example.App", "--user")), \
+     mock.patch.object(app, "perform", return_value=True) as perform_mock, \
+     mock.patch.object(app, "approve_flatpak", return_value=(True, True)), \
+     mock.patch.object(app, "message", return_value=Gtk.ResponseType.YES):
+    assert app.main("/fake.desktop") == 0
+    assert perform_mock.call_count == 2
+    assert "--unused" not in perform_mock.call_args_list[0].args[0]
+    assert "--unused" in perform_mock.call_args_list[1].args[0]
+
+print("GTK native/light/dark/unchecked/opt-in/fallback dialogs passed")
