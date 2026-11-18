@@ -25,29 +25,27 @@ dlg = Gtk.MessageDialog(
     message_type=Gtk.MessageType.WARNING,
     buttons=Gtk.ButtonsType.OK_CANCEL, text="Preview — nothing will be removed",
 )
-app._style_dialog(dlg, Gtk.ResponseType.OK)
-dlg.show_all()
-while Gtk.events_pending():
-    Gtk.main_iteration()
+# Exercise the *actual* confirmation function without authorizing removal.
+# The timeout sees the dialog after it maps and responds Cancel.
+seen = []
+def cancel_dialog():
+    for window in Gtk.Window.list_toplevels():
+        if isinstance(window, Gtk.Dialog) and window.get_visible():
+            seen.append(window.get_mapped())
+            window.response(Gtk.ResponseType.CANCEL)
+            return False
+    return True
 
-assert dlg.get_visible(), "GTK confirmation dialog is not visible"
-assert dlg.get_mapped(), "GTK confirmation dialog failed to map"
-assert app._CSS_PROVIDER is not None, "Dialog stylesheet did not load"
-assert not dlg.get_app_paintable(), "GTK automatic background painting disabled"
-assert dlg.get_decorated(), "GTK window decorations unexpectedly disabled"
+from gi.repository import GLib
 dlg.destroy()
+GLib.timeout_add(100, cancel_dialog)
+assert app.approve_packages(["test-package"]) is False
+assert seen == [True], "Package confirmation was not mapped"
 
-# Also exercise the unowned/error-message initializer, without invoking pacman.
-dlg = Gtk.MessageDialog(
-    parent=None, flags=Gtk.DialogFlags.MODAL,
-    message_type=Gtk.MessageType.ERROR,
-    buttons=Gtk.ButtonsType.CLOSE, text="Safe smoke test",
-)
-app._style_dialog(dlg)
-dlg.show_all()
-while Gtk.events_pending():
-    Gtk.main_iteration()
-assert dlg.get_mapped()
-dlg.destroy()
-print("GTK dialog smoke test passed")
+# The error-message path uses the same native GTK dialog machinery.
+seen.clear()
+GLib.timeout_add(100, cancel_dialog)
+app.message("Safe smoke test")
+assert seen == [True], "Error dialog was not mapped"
+print("GTK confirmation and error dialogs mapped successfully")
 
