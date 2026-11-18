@@ -258,4 +258,58 @@ with mock.patch.object(app, "validate_launcher", return_value="/fake.desktop"), 
     assert "--unused" not in perform_mock.call_args_list[0].args[0]
     assert "--unused" in perform_mock.call_args_list[1].args[0]
 
-print("GTK native/light/dark/unchecked/opt-in/fallback dialogs passed")
+# A required pacman package must produce a helpful dependency explanation
+# *without* opening an uninstall approval or starting any removal.
+with mock.patch.object(app, "validate_launcher", return_value="/fake.desktop"), \
+     mock.patch.object(app, "package_owner", return_value="shared-lib"), \
+     mock.patch.object(app, "removal_plan", side_effect=app.RemovalError(
+         "error: failed to prepare transaction (could not satisfy dependencies)")), \
+     mock.patch.object(app, "required_by", return_value=["cinnamon", "player"]), \
+     mock.patch.object(app, "approve_packages") as approval, \
+     mock.patch.object(app, "perform") as removal, \
+     mock.patch.object(app, "message") as warning:
+    assert app.main("/fake.desktop") == 1
+    assert warning.call_count == 1
+    assert "shared-lib" in warning.call_args.args[0]
+    assert "require" in warning.call_args.args[0]
+    assert "cinnamon" in warning.call_args.kwargs["detail"]
+    assert "player" in warning.call_args.kwargs["detail"]
+    approval.assert_not_called()
+    removal.assert_not_called()
+
+# Even if direct dependents cannot be identified, show pacman's conflict as
+# an understandable message rather than a generic top-level error.
+with mock.patch.object(app, "required_by", return_value=[]), \
+     mock.patch.object(app, "message") as warning:
+    app.explain_pacman_preview_failure(
+        "shared-lib", app.RemovalError(
+            "error: failed to prepare transaction (could not satisfy dependencies)"))
+    assert "breaking dependencies" in warning.call_args.args[0]
+    assert "Nothing was removed" in warning.call_args.kwargs["detail"]
+
+# Protected targets are rejected before pacman's dependency preview is called.
+with mock.patch.object(app, "validate_launcher", return_value="/fake.desktop"), \
+     mock.patch.object(app, "package_owner", return_value="cinnamon"), \
+     mock.patch.object(app, "removal_plan") as preview, \
+     mock.patch.object(app, "approve_packages") as approval, \
+     mock.patch.object(app, "perform") as removal, \
+     mock.patch.object(app, "message") as warning:
+    assert app.main("/fake.desktop") == 1
+    assert "protected system package" in warning.call_args.args[0]
+    preview.assert_not_called()
+    approval.assert_not_called()
+    removal.assert_not_called()
+
+# Ordinary leaf-package uninstall remains unchanged and exact.
+with mock.patch.object(app, "validate_launcher", return_value="/fake.desktop"), \
+     mock.patch.object(app, "package_owner", return_value="leaf-app"), \
+     mock.patch.object(app, "removal_plan", return_value=["leaf-app"]) as preview, \
+     mock.patch.object(app, "approve_packages", return_value=["leaf-app"]) as approval, \
+     mock.patch.object(app, "perform", return_value=True) as removal:
+    assert app.main("/fake.desktop") == 0
+    preview.assert_called_once_with("leaf-app", include_unused=False)
+    assert approval.call_count == 1
+    assert removal.call_args.args[0][-1:] == ["leaf-app"]
+    assert "-c" not in removal.call_args.args[0]
+
+print("GTK native/light/dark/checkbox/dependency-block/fallback dialogs passed")
