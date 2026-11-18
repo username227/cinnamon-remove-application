@@ -136,16 +136,14 @@ def _update_dialog_css(*_unused):
 def _style_dialog(dialog, destructive_response=None):
     global _CSS_PROVIDER
     dialog.get_style_context().add_class("cinnamon-remove-dialog")
-    dialog.set_decorated(False)
+    # Retain GTK window decorations until frameless styling is proven on
+    # Cinnamon Wayland. Hiding a titlebar must never hide the whole dialog.
     dialog.set_position(Gtk.WindowPosition.CENTER)
     dialog.set_border_width(16)
     dialog.set_keep_above(True)
-    # Transparent visual permits rounded outer corners on compositors that
-    # support RGBA GTK windows; the CSS background remains fully opaque.
-    screen = dialog.get_screen()
-    if screen is not None and screen.get_rgba_visual() is not None:
-        dialog.set_visual(screen.get_rgba_visual())
-        dialog.set_app_paintable(True)
+    # Allow GTK to paint the window normally. set_app_paintable(True) suppresses
+    # GTK's automatic background painting and can make frameless dialogs fully
+    # transparent under Cinnamon/Wayland, even when a CSS background is set.
     if destructive_response is not None:
         button = dialog.get_widget_for_response(destructive_response)
         if button is not None:
