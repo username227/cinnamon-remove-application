@@ -118,7 +118,9 @@ def _stylesheet(scheme):
     .cinnamon-remove-dialog label {
         color: %(text)s;
     }
-    .cinnamon-remove-dialog button {
+    /* Style action buttons only. Styling all buttons accidentally enlarged
+       the titlebar's window-close button under Cinnamon/Wayland. */
+    .cinnamon-remove-dialog button.cinnamon-remove-action {
         background-image: none;
         box-shadow: none;
         background-color: %(button)s;
@@ -130,17 +132,21 @@ def _stylesheet(scheme):
         min-width: 100px;
         font-weight: bold;
     }
-    .cinnamon-remove-dialog button:hover {
+    .cinnamon-remove-dialog button.cinnamon-remove-action:hover {
         background-color: %(button_hover)s;
     }
-    .cinnamon-remove-dialog button.cinnamon-remove-destructive {
+    .cinnamon-remove-dialog button.cinnamon-remove-action.cinnamon-remove-destructive {
         background-color: %(danger)s;
         color: white;
         border-color: %(danger)s;
     }
-    .cinnamon-remove-dialog button.cinnamon-remove-destructive:hover {
+    .cinnamon-remove-dialog button.cinnamon-remove-action.cinnamon-remove-destructive:hover {
         background-color: %(danger_hover)s;
         border-color: %(danger_hover)s;
+    }
+    /* GTK theme label rules otherwise override the destructive foreground. */
+    .cinnamon-remove-dialog button.cinnamon-remove-destructive label {
+        color: white;
     }
     .cinnamon-remove-dialog scrolledwindow,
     .cinnamon-remove-dialog treeview.view {
@@ -182,6 +188,11 @@ def style_dialog(dialog, destructive_response=None):
         _CACHED_SCHEME = scheme
 
     dialog.get_style_context().add_class("cinnamon-remove-dialog")
+    # Restrict rounded, wide button styling to dialog actions, not headerbar
+    # controls (the latter were stretched by the previous broad CSS selector).
+    for button in dialog.get_action_area().get_children():
+        if isinstance(button, Gtk.Button):
+            button.get_style_context().add_class("cinnamon-remove-action")
     if destructive_response is not None:
         button = dialog.get_widget_for_response(destructive_response)
         if button is not None:
