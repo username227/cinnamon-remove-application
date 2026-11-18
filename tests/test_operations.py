@@ -63,7 +63,7 @@ class TestPacman(unittest.TestCase):
 
     def test_reverse_dependents_none_and_query_failure(self):
         for result in (
-            subprocess.CompletedProcess([], 0, "Required By     : None\\n", ""),
+            subprocess.CompletedProcess([], 0, "Required By     : None\n", ""),
             subprocess.CompletedProcess([], 1, "", "package not found"),
         ):
             with patch.object(ops, "run", return_value=result):
@@ -71,7 +71,7 @@ class TestPacman(unittest.TestCase):
 
     def test_reverse_dependents_are_never_removal_targets(self):
         fake = subprocess.CompletedProcess(
-            [], 0, "Required By     : cinnamon other-app\\n", "")
+            [], 0, "Required By     : cinnamon other-app\n", "")
         with patch.object(ops, "run", return_value=fake):
             self.assertEqual(ops.required_by("shared-lib"), ["cinnamon", "other-app"])
         # This diagnostic cannot expand the actual pacman transaction.
