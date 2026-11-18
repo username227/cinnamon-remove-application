@@ -1,0 +1,25 @@
+name: Python regression tests
+on:
+  push:
+    branches:
+      - master
+      - modernize/cinnamon-6.8-pacman
+      - feature/cinnamon-dialog-styling
+      - 'release/**'
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Check Python syntax
+        run: python -m py_compile usr/bin/cinnamon-remove-application usr/lib/cinnamon-remove-application/operations.py usr/lib/cinnamon-remove-application/appearance.py tests/test_operations.py tests/gui_smoke.py
+      - name: Unit tests (no pacman or GTK required)
+        run: python -m unittest discover -s tests -v
+      - name: Install GTK smoke-test dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-gi gir1.2-gtk-3.0 xvfb
+      - name: GTK dialog visibility smoke test (Xvfb)
+        run: xvfb-run -a /usr/bin/python3 tests/gui_smoke.py
