@@ -39,6 +39,7 @@ _PALETTES = {
 
 _PROVIDER = None
 _CACHED_SCHEME = None
+_THEME_WATCHERS = []
 
 
 def _configuration():
@@ -110,6 +111,20 @@ def _stylesheet(scheme):
         background-color: %(surface)s;
         color: %(text)s;
     }
+    /* GTK3 creates a separate client-side headerbar. Style it with the
+       same palette as the body; don't change decorations or window painting. */
+    .cinnamon-remove-dialog headerbar,
+    .cinnamon-remove-dialog headerbar.titlebar {
+        background-image: none;
+        background-color: %(surface)s;
+        color: %(text)s;
+        border-color: %(border)s;
+        box-shadow: none;
+    }
+    .cinnamon-remove-dialog headerbar label,
+    .cinnamon-remove-dialog headerbar.titlebar label {
+        color: %(text)s;
+    }
     .cinnamon-remove-dialog box,
     .cinnamon-remove-dialog .dialog-vbox,
     .cinnamon-remove-dialog .dialog-action-area {
@@ -160,6 +175,47 @@ def _stylesheet(scheme):
     """ % _PALETTES[scheme]
 
 
+def _refresh_theme(*_unused):
+    """Recolor already-open dialogs when Cinnamon's settings change."""
+    global _CACHED_SCHEME
+    if _PROVIDER is None:
+        return
+    try:
+        scheme = _scheme()
+        if scheme != _CACHED_SCHEME:
+            _PROVIDER.load_from_data(_stylesheet(scheme).encode("utf-8"))
+            _CACHED_SCHEME = scheme
+    except Exception as exc:
+        # Theme events must never interfere with an uninstall confirmation.
+        import sys
+        print("cinnamon-remove-application: could not refresh theme: "
+              + str(exc), file=sys.stderr)
+
+
+def _watch_system_appearance():
+    """Track Cinnamon's portal preference and GTK application-theme changes."""
+    for schema, key in (
+        ("org.x.apps.portal", "color-scheme"),
+        ("org.cinnamon.desktop.interface", "gtk-theme"),
+    ):
+        try:
+            settings = _settings(schema)
+            if settings is not None:
+                signal_id = settings.connect("changed::" + key, _refresh_theme)
+                _THEME_WATCHERS.append((settings, signal_id))
+        except Exception:
+            # Missing or incompatible schemas should not affect dialogs.
+            continue
+    try:
+        gtk_settings = Gtk.Settings.get_default()
+        if gtk_settings is not None:
+            signal_id = gtk_settings.connect(
+                "notify::gtk-theme-name", _refresh_theme)
+            _THEME_WATCHERS.append((gtk_settings, signal_id))
+    except Exception:
+        pass
+
+
 def style_dialog(dialog, destructive_response=None):
     """Apply a scoped stylesheet, never changing window decoration or painting.
 
@@ -181,11 +237,9 @@ def style_dialog(dialog, destructive_response=None):
             screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         _PROVIDER = provider
         _CACHED_SCHEME = scheme
+        _watch_system_appearance()
     elif scheme != _CACHED_SCHEME:
-        # All dialogs are short-lived. This also supports manual theme changes
-        # between dialogs if the module is reused in the same process.
-        _PROVIDER.load_from_data(_stylesheet(scheme).encode("utf-8"))
-        _CACHED_SCHEME = scheme
+        _refresh_theme()
 
     dialog.get_style_context().add_class("cinnamon-remove-dialog")
     # Restrict rounded, wide button styling to dialog actions, not headerbar
